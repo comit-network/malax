@@ -1,4 +1,5 @@
 # malax
+
 A tool for _extracting_ the BTC price from BitMex and feeding it into redis in an Olivia compatible format.
 
 Olivia is an oracle that attestes to various events.
