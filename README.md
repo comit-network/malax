@@ -2,7 +2,7 @@
 
 A tool for _extracting_ the BTC price from BitMex and feeding it into redis in an Olivia compatible format.
 
-Olivia is an oracle that attestes to various events.
+Olivia is an oracle that attests to various events.
 In order to attest to an event, it needs to be told about the event's outcome.
 
 When run, `malax` connects to the BitMex API and extracts the hourly Bitcoin price for the given number of hours.
