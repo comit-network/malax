@@ -21,10 +21,16 @@ struct Opts {
 fn main() -> Result<()> {
     let opts = Opts::parse();
 
-    // url constructed by playing around with https://www.bitmex.com/api/explorer/#!/Instrument/Instrument_getCompositeIndex.
-    let mut url = reqwest::Url::parse("https://www.bitmex.com/api/v1/instrument/compositeIndex?symbol=.BXBT&filter=%7B%22symbol%22%3A%20%22.BXBT%22%2C%20%22timestamp.ss%22%3A%20%2200%22%2C%20%20%22timestamp.uu%22%3A%20%2200%22%7D&columns=lastPrice%2Ctimestamp&reverse=true")?;
+    let mut url = reqwest::Url::parse("https://www.bitmex.com/api/v1/instrument/compositeIndex")?;
     url.query_pairs_mut()
-        .append_pair("count", &opts.past_hours.to_string());
+        .append_pair("symbol", ".BXBT") // only interested in index
+        .append_pair(
+            "filter",
+            r#"{"symbol": ".BXBT", "timestamp.ss": "00", "timestamp.uu": "00"}"#,  // only hourly updates
+        )
+        .append_pair("columns", "lastPrice,timestamp") // only necessary fields
+        .append_pair("reverse", "true") // latest first, allows us to go back in time via `count`
+        .append_pair("count", &opts.past_hours.to_string()); // how many hours to report
 
     let outcomes = reqwest::blocking::get(url)?
         .json::<Vec<Quote>>()?
@@ -59,7 +65,7 @@ impl BtcUsdBitmexOutcome {
         let format = format_description::parse("[year]-[month]-[day]T[hour]:[minute]:[second]")?;
 
         Ok(Self {
-            id: format!("/BitMEX/BXBT/{}.price", quote.timestamp.format(&format)?),
+            id: format!("/BXBT/{}.price", quote.timestamp.format(&format)?),
             outcome: (quote.last_price as u64).to_string(),
         })
     }
