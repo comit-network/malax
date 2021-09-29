@@ -4,6 +4,9 @@
   },
   "toml": {
   },
+  "rustfmt": {
+    "imports_granularity": "module"
+  },
   "includes": ["**/*.{md,toml,rs}"],
   "excludes": [],
   "plugins": [

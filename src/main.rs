@@ -1,53 +1,77 @@
 use anyhow::Result;
 use clap::Clap;
 use time::format_description::well_known::Rfc3339;
-use time::OffsetDateTime;
+use time::{format_description, OffsetDateTime};
 
 #[derive(Clap)]
 struct Opts {
     /// The redis instance to connect to.
     #[clap(long)]
     redis: String,
+
+    /// The number of past hours to fetch prices for, starting from now.
+    #[clap(long, default_value = "24")]
+    past_hours: u8,
+
+    /// The redis list to push the outcomes into.
+    #[clap(long, default_value = "bitmex:outcomes")]
+    list: String,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let opts = Opts::parse();
 
-    let client = redis::Client::open(opts.redis.as_ref())?;
-    let mut con = client.get_async_connection().await?;
-
-    let now = OffsetDateTime::now_utc();
-    let yesterday = now - time::Duration::DAY;
-
-    let mut url = reqwest::Url::parse("https://www.bitmex.com/api/v1/quote/bucketed?binSize=1h&partial=false&symbol=XBT&count=100&reverse=false")?;
+    // url constructed by playing around with https://www.bitmex.com/api/explorer/#!/Instrument/Instrument_getCompositeIndex.
+    let mut url = reqwest::Url::parse("https://www.bitmex.com/api/v1/instrument/compositeIndex?symbol=.BXBT&filter=%7B%22symbol%22%3A%20%22.BXBT%22%2C%20%22timestamp.ss%22%3A%20%2200%22%2C%20%20%22timestamp.uu%22%3A%20%2200%22%7D&columns=lastPrice%2Ctimestamp&reverse=true")?;
     url.query_pairs_mut()
-        .append_pair("startTime", &yesterday.format(&Rfc3339)?);
+        .append_pair("count", &opts.past_hours.to_string());
 
-    let quotes = reqwest::get(url).await?.json::<Vec<Quote>>().await?;
+    let outcomes = reqwest::blocking::get(url)?
+        .json::<Vec<Quote>>()?
+        .into_iter()
+        .map(BtcUsdBitmexOutcome::new)
+        .collect::<Result<Vec<_>>>()?;
 
-    for quote in quotes {
-        redis::cmd("RPUSH")
-            .arg("outcomes")
-            .arg(serde_json::to_string(&WireEventOutcome {
-                event_id: "todo".to_owned(), // TODO: create correct event id (needs bid and ask)
-                outcome: quote.ask_price.to_string(), // TODO: format price to cents
-                time: quote.timestamp,
-            })?)
-            .query_async(&mut con)
-            .await?;
-    }
+    let mut redis = redis::Client::open(opts.redis.as_ref())?;
+
+    redis::cmd("RPUSH")
+        .arg(&opts.list)
+        .arg(&outcomes)
+        .query(&mut redis)?;
+
+    eprintln!(
+        "Added {} outcomes to redis list '{}'",
+        outcomes.len(),
+        opts.list
+    );
 
     Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub struct WireEventOutcome {
-    #[serde(rename = "id")]
-    pub event_id: String,
+pub struct BtcUsdBitmexOutcome {
+    pub id: String,
     pub outcome: String,
-    #[serde(with = "rfc3339")]
-    pub time: OffsetDateTime,
+}
+
+impl BtcUsdBitmexOutcome {
+    fn new(quote: Quote) -> Result<Self> {
+        let format = format_description::parse("[year]-[month]-[day]T[hour]:[minute]:[second]")?;
+
+        Ok(Self {
+            id: format!("/BitMEX/BXBT/{}.price", quote.timestamp.format(&format)?),
+            outcome: (quote.last_price as u64).to_string(),
+        })
+    }
+}
+
+impl redis::ToRedisArgs for BtcUsdBitmexOutcome {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + redis::RedisWrite,
+    {
+        out.write_arg(&serde_json::to_vec(&self).expect("serialization to always work"))
+    }
 }
 
 #[derive(serde::Deserialize, Debug)]
@@ -55,27 +79,13 @@ pub struct WireEventOutcome {
 struct Quote {
     #[serde(with = "rfc3339")]
     timestamp: OffsetDateTime,
-    bid_price: f64,
-    ask_price: f64,
+    last_price: f64,
 }
 
 mod rfc3339 {
+    use super::*;
     use serde::de::Error as _;
-    use serde::ser::Error as _;
-    use serde::Deserialize;
-    use serde::Deserializer;
-    use serde::Serializer;
-    use time::format_description::well_known::Rfc3339;
-    use time::OffsetDateTime;
-
-    pub fn serialize<S: Serializer>(
-        datetime: &OffsetDateTime,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        let string = datetime.format(&Rfc3339).map_err(S::Error::custom)?;
-
-        serializer.serialize_str(&string)
-    }
+    use serde::{Deserialize, Deserializer};
 
     pub fn deserialize<'a, D>(deserializer: D) -> Result<OffsetDateTime, D::Error>
     where
