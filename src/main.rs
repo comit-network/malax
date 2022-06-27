@@ -11,7 +11,7 @@ struct Opts {
 
     /// The number of past hours to fetch prices for, starting from now.
     #[clap(long, default_value = "24")]
-    past_hours: u8,
+    past_hours: u32,
 
     /// The redis list to push the outcomes into.
     #[clap(long, default_value = "bitmex:outcomes")]
@@ -22,14 +22,14 @@ fn main() -> Result<()> {
     let opts = Opts::parse();
 
     let mut outcomes = Vec::new();
-    for ResultsPage { count, start } in ResultsPages::new(opts.past_hours as u32).0.iter() {
+    for ResultsPage { count, start } in ResultsPages::new(opts.past_hours * 60).0.iter() {
         let mut url =
             reqwest::Url::parse("https://www.bitmex.com/api/v1/instrument/compositeIndex")?;
         url.query_pairs_mut()
             .append_pair("symbol", ".BXBT") // only interested in index
             .append_pair(
                 "filter",
-                r#"{"symbol": ".BXBT", "timestamp.ss": "00", "timestamp.uu": "00"}"#, // only hourly updates
+                r#"{"symbol": ".BXBT", "timestamp.ss": "00"}"#, // per minute
             )
             .append_pair("columns", "lastPrice,timestamp") // only necessary fields
             .append_pair("reverse", "true") // latest first, allows us to go back in time via `count`
