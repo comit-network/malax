@@ -5,7 +5,7 @@ A tool for _extracting_ the BTC price from BitMex and feeding it into redis in a
 Olivia is an oracle that attests to various events.
 In order to attest to an event, it needs to be told about the event's outcome.
 
-When run, `malax` connects to the BitMex API and extracts the hourly Bitcoin price for the given number of hours.
+When run, `malax` connects to the BitMex API and extracts the Bitcoin price per minute for the given number of hours.
 It then sends this price into the given Redis instance which is used by Olivia to attest to the given price.
 
 ## Usage
