@@ -1,9 +1,11 @@
 use anyhow::Result;
-use clap::Clap;
+use clap::Parser;
 use time::format_description::well_known::Rfc3339;
 use time::{format_description, OffsetDateTime};
 
-#[derive(Clap)]
+#[derive(Parser)]
+#[clap(author, version, about, long_about = None)]
+#[clap(propagate_version = true)]
 struct Opts {
     /// The redis instance to connect to.
     #[clap(long)]
