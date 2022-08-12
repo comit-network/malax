@@ -1,6 +1,5 @@
 use anyhow::Result;
 use clap::Parser;
-use time::format_description::well_known::Rfc3339;
 use time::{format_description, OffsetDateTime};
 
 #[derive(Parser)]
@@ -93,25 +92,9 @@ impl redis::ToRedisArgs for BtcUsdBitmexOutcome {
 #[derive(serde::Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct Quote {
-    #[serde(with = "rfc3339")]
+    #[serde(with = "time::serde::rfc3339")]
     timestamp: OffsetDateTime,
     last_price: f64,
-}
-
-mod rfc3339 {
-    use super::*;
-    use serde::de::Error as _;
-    use serde::{Deserialize, Deserializer};
-
-    pub fn deserialize<'a, D>(deserializer: D) -> Result<OffsetDateTime, D::Error>
-    where
-        D: Deserializer<'a>,
-    {
-        let string = String::deserialize(deserializer)?;
-        let date_time = OffsetDateTime::parse(&string, &Rfc3339).map_err(D::Error::custom)?;
-
-        Ok(date_time)
-    }
 }
 
 /// Configuration of paginated results for a BitMEX API.
