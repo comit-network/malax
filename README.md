@@ -1,17 +1,25 @@
 # malax
 
-A tool for _extracting_ the BTC price from BitMex and feeding it into redis in an Olivia compatible format.
+A tool for _extracting_ the index prices from BitMex and feeding them into Redis in an Olivia-compatible format.
 
 Olivia is an oracle that attests to various events.
 In order to attest to an event, it needs to be told about the event's outcome.
 
-When run, `malax` connects to the BitMex API and extracts the Bitcoin price per minute for the given number of hours.
+When run, `malax` connects to the BitMex API and extracts the specified index price per minute, for the given number of hours.
 It then sends this price into the given Redis instance which is used by Olivia to attest to the given price.
 
 ## Usage
 
+To get the bitcoin index price over the last 24 hours:
+
 ```bash
-malax --redis redis://localhost:6379 --past-hours 24
+malax --redis redis://localhost:6379 --past-hours 24 btc
+```
+
+To get the eth index price over the last 24 hours:
+
+```bash
+malax --redis redis://localhost:6379 --past-hours 24 eth
 ```
 
 ## What is up with the name?

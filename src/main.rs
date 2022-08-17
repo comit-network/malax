@@ -1,12 +1,16 @@
-use anyhow::Result;
+use std::str::FromStr;
+
+use anyhow::{bail, Result};
 use clap::Parser;
-use time::format_description::well_known::Rfc3339;
 use time::{format_description, OffsetDateTime};
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
 #[clap(propagate_version = true)]
 struct Opts {
+    /// The index price for which the historical data will be pulled.
+    index: Index,
+
     /// The redis instance to connect to.
     #[clap(long)]
     redis: String,
@@ -23,15 +27,18 @@ struct Opts {
 fn main() -> Result<()> {
     let opts = Opts::parse();
 
+    let index = opts.index;
+    let symbol = index.as_bitmex_symbol();
+
     let mut outcomes = Vec::new();
     for ResultsPage { count, start } in ResultsPages::new(opts.past_hours * 60).0.iter() {
         let mut url =
             reqwest::Url::parse("https://www.bitmex.com/api/v1/instrument/compositeIndex")?;
         url.query_pairs_mut()
-            .append_pair("symbol", ".BXBT") // only interested in index
+            .append_pair("symbol", &format!(".{symbol}")) // only interested in index
             .append_pair(
                 "filter",
-                r#"{"symbol": ".BXBT", "timestamp.ss": "00"}"#, // per minute
+                &format!("{{\"symbol\": \".{symbol}\", \"timestamp.ss\": \"00\"}}"), // per minute
             )
             .append_pair("columns", "lastPrice,timestamp") // only necessary fields
             .append_pair("reverse", "true") // latest first, allows us to go back in time via `count`
@@ -41,7 +48,7 @@ fn main() -> Result<()> {
         let page_outcomes = reqwest::blocking::get(url)?
             .json::<Vec<Quote>>()?
             .into_iter()
-            .map(BtcUsdBitmexOutcome::new)
+            .map(|quote| BitmexOutcome::new(quote, index))
             .collect::<Result<Vec<_>>>()?;
 
         outcomes.push(page_outcomes);
@@ -64,24 +71,55 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+enum Index {
+    Btc,
+    Eth,
+}
+
+impl Index {
+    fn as_bitmex_symbol(&self) -> &str {
+        match self {
+            Index::Btc => "BXBT",
+            Index::Eth => "BETH",
+        }
+    }
+}
+
+impl FromStr for Index {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_ref() {
+            "btc" | "bitcoin" => Self::Btc,
+            "eth" | "ether" | "ethereum" => Self::Eth,
+            _ => bail!("Index not supported"),
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub struct BtcUsdBitmexOutcome {
+pub struct BitmexOutcome {
     pub id: String,
     pub outcome: String,
 }
 
-impl BtcUsdBitmexOutcome {
-    fn new(quote: Quote) -> Result<Self> {
+impl BitmexOutcome {
+    fn new(quote: Quote, index: Index) -> Result<Self> {
         let format = format_description::parse("[year]-[month]-[day]T[hour]:[minute]:[second]")?;
 
         Ok(Self {
-            id: format!("/BXBT/{}.price", quote.timestamp.format(&format)?),
+            id: format!(
+                "/{}/{}.price",
+                index.as_bitmex_symbol(),
+                quote.timestamp.format(&format)?
+            ),
             outcome: (quote.last_price as u64).to_string(),
         })
     }
 }
 
-impl redis::ToRedisArgs for BtcUsdBitmexOutcome {
+impl redis::ToRedisArgs for BitmexOutcome {
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + redis::RedisWrite,
@@ -93,25 +131,9 @@ impl redis::ToRedisArgs for BtcUsdBitmexOutcome {
 #[derive(serde::Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct Quote {
-    #[serde(with = "rfc3339")]
+    #[serde(with = "time::serde::rfc3339")]
     timestamp: OffsetDateTime,
     last_price: f64,
-}
-
-mod rfc3339 {
-    use super::*;
-    use serde::de::Error as _;
-    use serde::{Deserialize, Deserializer};
-
-    pub fn deserialize<'a, D>(deserializer: D) -> Result<OffsetDateTime, D::Error>
-    where
-        D: Deserializer<'a>,
-    {
-        let string = String::deserialize(deserializer)?;
-        let date_time = OffsetDateTime::parse(&string, &Rfc3339).map_err(D::Error::custom)?;
-
-        Ok(date_time)
-    }
 }
 
 /// Configuration of paginated results for a BitMEX API.
